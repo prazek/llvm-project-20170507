@@ -17,6 +17,7 @@
 #ifndef LLVM_ANALYSIS_MUSTEXECUTE_H
 #define LLVM_ANALYSIS_MUSTEXECUTE_H
 
+#include <llvm/IR/ValueHandle.h>
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Analysis/EHPersonalities.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -39,11 +40,16 @@ class Loop;
 struct LoopSafetyInfo {
   bool MayThrow = false;       // The current loop contains an instruction which
                                // may throw.
-  bool HeaderMayThrow = false; // Same as previous, but specific to loop header
+  bool HeaderMayThrow = false;
+
   // Used to update funclet bundle operands.
   DenseMap<BasicBlock *, ColorVector> BlockColors;
 
   LoopSafetyInfo() = default;
+
+  bool isHeaderInstructionGuaranteedToExecute(const Instruction *Instr,
+                                              const Loop *CurLoop) const;
+
 };
 
 /// Computes safety information for a loop checks loop body & header for

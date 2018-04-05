@@ -37,6 +37,7 @@ loop:                                         ; preds = %entry, %for.inc
   call void @use(i64 %div)
   br label %loop
 }
+
 define void @throw_header_after_rec(i64* %xp, i64* %yp, i1* %cond) {
 ; CHECK-LABEL: throw_header_after_rec
 ; CHECK: %x = load i64, i64* %xp
@@ -79,8 +80,9 @@ loop:                                         ; preds = %entry, %for.inc
 
 ; Negative test
 define void @throw_header_before(i64 %x, i64 %y, i1* %cond) {
-; CHECK-LABEL: throw_header_before
+; CHECK-LABEL: throw_header
 ; CHECK-LABEL: loop
+; CHECK: call void @maythrow()
 ; CHECK: %div = udiv i64 %x, %y
 ; CHECK: call void @use(i64 %div)
 entry:
@@ -128,3 +130,4 @@ loop-if:
   call void @use(i64 %div)
   br label %loop
 }
+

@@ -29,11 +29,13 @@ void llvm::computeLoopSafetyInfo(LoopSafetyInfo *SafetyInfo, Loop *CurLoop) {
   assert(CurLoop != nullptr && "CurLoop cant be null");
   BasicBlock *Header = CurLoop->getHeader();
   // Setting default safety values.
-  SafetyInfo->MayThrow = false;
   SafetyInfo->HeaderMayThrow = false;
+  SafetyInfo->MayThrow = false;
+  SafetyInfo->BlockColors.clear();
+
   // Iterate over header and compute safety info.
-  SafetyInfo->HeaderMayThrow =
-    !isGuaranteedToTransferExecutionToSuccessor(Header);
+  SafetyInfo->HeaderMayThrow |=
+      !isGuaranteedToTransferExecutionToSuccessor(Header);
 
   SafetyInfo->MayThrow = SafetyInfo->HeaderMayThrow;
   // Iterate over loop instructions and compute safety info.
@@ -111,13 +113,9 @@ bool llvm::isGuaranteedToExecute(const Instruction &Inst,
   // If the instruction is in the header block for the loop (which is very
   // common), it is always guaranteed to dominate the exit blocks.  Since this
   // is a common case, and can save some work, check it now.
-  if (Inst.getParent() == CurLoop->getHeader())
-    // If there's a throw in the header block, we can't guarantee we'll reach
-    // Inst unless we can prove that Inst comes before the potential implicit
-    // exit.  At the moment, we use a (cheap) hack for the common case where
-    // the instruction of interest is the first one in the block.
-    return !SafetyInfo->HeaderMayThrow ||
-      Inst.getParent()->getFirstNonPHI() == &Inst;
+  if (Inst.getParent() == CurLoop->getHeader()) {
+    return SafetyInfo->isHeaderInstructionGuaranteedToExecute(&Inst, CurLoop);
+  }
 
   // Somewhere in this loop there is an instruction which may throw and make us
   // exit the loop.
@@ -266,4 +264,26 @@ bool MustExecutePrinter::runOnFunction(Function &F) {
   F.print(dbgs(), &Writer);
   
   return false;
+}
+
+bool LoopSafetyInfo::isHeaderInstructionGuaranteedToExecute(
+    const Instruction *Instr, const Loop *CurLoop) const {
+
+  assert(Instr->getParent() == CurLoop->getHeader());
+  if (!HeaderMayThrow)
+    return true;
+
+  unsigned Steps = 0;
+  for (const auto &HeaderInstr : *CurLoop->getHeader()) {
+    if (&HeaderInstr == Instr)
+      return true;
+    if (!isGuaranteedToTransferExecutionToSuccessor(&HeaderInstr))
+      return false;
+
+    // Limit search to avoid quadratic complexity.
+    if (++Steps > 66)
+      return false;
+  }
+
+  llvm_unreachable("Should have found something or reach steps limit");
 }
