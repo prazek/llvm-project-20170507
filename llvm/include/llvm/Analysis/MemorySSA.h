@@ -677,6 +677,7 @@ public:
   using AccessList = iplist<MemoryAccess, ilist_tag<MSSAHelpers::AllAccessTag>>;
   using DefsList =
       simple_ilist<MemoryAccess, ilist_tag<MSSAHelpers::DefsOnlyTag>>;
+  using InvariantGroupAccesses = SmallVector<MemoryUseOrDef *, 4>;
 
   /// Return the list of MemoryAccess's for a given basic block.
   ///
@@ -768,6 +769,8 @@ private:
 
   using AccessMap = DenseMap<const BasicBlock *, std::unique_ptr<AccessList>>;
   using DefsMap = DenseMap<const BasicBlock *, std::unique_ptr<DefsList>>;
+  using UseOrDefAccessMap = DenseMap<const BasicBlock *, InvariantGroupAccesses>;
+
 
   void
   determineInsertionPoint(const SmallPtrSetImpl<BasicBlock *> &DefiningBlocks);

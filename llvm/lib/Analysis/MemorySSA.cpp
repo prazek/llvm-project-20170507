@@ -1107,7 +1107,7 @@ public:
     Walker = MSSA->getWalker();
   }
 
-  void optimizeUses();
+  void optimizeUses(const UseOrDefAccessMap &InvariantGroupMap);
 
 private:
   /// This represents where a given memorylocation is in the stack.
@@ -1131,6 +1131,20 @@ private:
   void optimizeUsesInBlock(const BasicBlock *, unsigned long &, unsigned long &,
                            SmallVectorImpl<MemoryAccess *> &,
                            DenseMap<MemoryLocOrCall, MemlocStackInfo> &);
+
+  using MostDominatingInvariantGroupMap = DenseMap<Value *, MemoryAccess *>;
+
+  struct InsertedInvariantGroupInfo {
+    Value *PointerOperand;
+    MemoryAccess *DefiningAccess;
+  };
+  /// Optimizes memory uses based on !invariant.group metadata.
+  void optimizeInvariantGroupUsesInBlock(
+    const BasicBlock *,
+    const UseOrDefAccessMap& InvariantGroupMap,
+    MostDominatingInvariantGroupMap &,
+    SmallVectorImpl<InsertedInvariantGroupInfo> &);
+
 
   MemorySSA *MSSA;
   MemorySSAWalker *Walker;
@@ -1304,18 +1318,97 @@ void MemorySSA::OptimizeUses::optimizeUsesInBlock(
   }
 }
 
+void MemorySSA::OptimizeUses::optimizeInvariantGroupUsesInBlock(
+  const BasicBlock *BB,
+  const UseOrDefAccessMap& InvariantGroupMap,
+  MostDominatingInvariantGroupMap &MostDominatingInvariantGroup,
+  SmallVectorImpl<InsertedInvariantGroupInfo> &InsertedInvariants) {
+
+  auto it = InvariantGroupMap.find(BB);
+  if (it == InvariantGroupMap.end())
+    return;
+
+  const auto &InvariantGroupAccesses = it->second;
+
+  // Erase inserted information from not dominated blocks.
+  BasicBlock *LastBlock = nullptr;
+  while (!InsertedInvariants.empty()) {
+    BasicBlock *const CurrentBlock =
+      InsertedInvariants.back().DefiningAccess->getBlock();
+    // Cache Last block to avoid checking for dominance.
+    if (LastBlock != CurrentBlock) {
+      LastBlock = CurrentBlock;
+      if (DT->dominates(CurrentBlock, BB))
+        break;
+    }
+
+    InsertedInvariantGroupInfo GI = InsertedInvariants.back();
+    MostDominatingInvariantGroup.erase(GI.PointerOperand);
+    InsertedInvariants.pop_back();
+  }
+
+  // Walk all loads/stores with !invariant.group, checking if there is
+  // dominating memory access with coresponding pointer operand and invariant
+  // group. If found then use it, if not then add it to map.
+  for (MemoryUseOrDef *MU : InvariantGroupAccesses) {
+    auto *I = MU->getMemoryInst();
+    InsertedInvariantGroupInfo GI;
+    assert(I->getMetadata(LLVMContext::MD_invariant_group));
+    if (auto *LI = dyn_cast<LoadInst>(I))
+      GI.PointerOperand = LI->getPointerOperand()->stripPointerCasts();
+    else if (auto *SI = dyn_cast<StoreInst>(I))
+      GI.PointerOperand = SI->getPointerOperand()->stripPointerCasts();
+    assert(GI.PointerOperand && "Nonnulls inserted");
+
+    const auto It = MostDominatingInvariantGroup.find(GI.PointerOperand);
+    // We found dominating Instruction with the same pointer operand.x
+    if (It != MostDominatingInvariantGroup.end()) {
+      // We found dead store, but we can't optimize Defs.
+      if (isa<MemoryDef>(MU))
+        continue;
+
+      // Skip liveOnEntry uses to not pessimize.
+      if (MSSA->isLiveOnEntryDef(MU->getDefiningAccess()))
+        continue;
+      // TODO: should I set optimize to true?
+      MU->setDefiningAccess(It->second);
+    } else {
+      MemoryAccess *InsertingAccess;
+      if (isa<MemoryUse>(MU))
+        InsertingAccess = MU->getDefiningAccess();
+      else // MemoryDef
+        InsertingAccess = MU;
+
+      GI.DefiningAccess = InsertingAccess;
+      MostDominatingInvariantGroup[GI.PointerOperand] = InsertingAccess;
+      InsertedInvariants.push_back(GI);
+    }
+  }
+}
+
+
 /// Optimize uses to point to their actual clobbering definitions.
-void MemorySSA::OptimizeUses::optimizeUses() {
+void MemorySSA::OptimizeUses::optimizeUses(
+    const UseOrDefAccessMap &InvariantGroupMap) {
+
   SmallVector<MemoryAccess *, 16> VersionStack;
   DenseMap<MemoryLocOrCall, MemlocStackInfo> LocStackInfo;
   VersionStack.push_back(MSSA->getLiveOnEntryDef());
 
+
+  MostDominatingInvariantGroupMap InvariantGroups;
+  SmallVector<InsertedInvariantGroupInfo, 16> InsertedInvariantGroups;
+
   unsigned long StackEpoch = 1;
   unsigned long PopEpoch = 1;
   // We perform a non-recursive top-down dominator tree walk.
-  for (const auto *DomNode : depth_first(DT->getRootNode()))
+  for (const auto *DomNode : depth_first(DT->getRootNode())) {
     optimizeUsesInBlock(DomNode->getBlock(), StackEpoch, PopEpoch, VersionStack,
                         LocStackInfo);
+    optimizeInvariantGroupUsesInBlock(DomNode->getBlock(), InvariantGroupMap,
+                                      InvariantGroups, InsertedInvariantGroups);
+  }
+
 }
 
 void MemorySSA::placePHINodes(
@@ -1346,6 +1439,12 @@ void MemorySSA::buildMemorySSA() {
   // could just look up the memory access for every possible instruction in the
   // stream.
   SmallPtrSet<BasicBlock *, 32> DefiningBlocks;
+  InvariantGroupAccesses InvariantGroupAccessesForBB;
+  auto hasInvariantGroupMD = [](const Instruction &I) {
+    return I.getMetadata(LLVMContext::MD_invariant_group) != nullptr;
+  };
+  UseOrDefAccessMap PerBlockInvariantGroupAccesses;
+
   // Go through each block, figure out where defs occur, and chain together all
   // the accesses.
   for (BasicBlock &B : F) {
@@ -1366,9 +1465,17 @@ void MemorySSA::buildMemorySSA() {
           Defs = getOrCreateDefsList(&B);
         Defs->push_back(*MUD);
       }
+      if (hasInvariantGroupMD(I))
+        InvariantGroupAccessesForBB.push_back(MUD);
+
     }
     if (InsertIntoDef)
       DefiningBlocks.insert(&B);
+    if (!InvariantGroupAccessesForBB.empty()) {
+      PerBlockInvariantGroupAccesses.insert(
+        {&B, std::move(InvariantGroupAccessesForBB)});
+      InvariantGroupAccessesForBB.clear();
+    }
   }
   placePHINodes(DefiningBlocks);
 
@@ -1379,7 +1486,7 @@ void MemorySSA::buildMemorySSA() {
 
   CachingWalker *Walker = getWalkerImpl();
 
-  OptimizeUses(this, Walker, AA, DT).optimizeUses();
+  OptimizeUses(this, Walker, AA, DT).optimizeUses(PerBlockInvariantGroupAccesses);
 
   // Mark the uses in unreachable blocks as live on entry, so that they go
   // somewhere.
