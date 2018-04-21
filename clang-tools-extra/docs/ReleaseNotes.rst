@@ -57,6 +57,11 @@ The improvements are...
 Improvements to clang-tidy
 --------------------------
 
+- New :doc:`misc-add-virtual
+  <clang-tidy/checks/misc-add-virtual>` check
+
+  FIXME: add release notes.
+
 - New module `abseil` for checks related to the `Abseil <https://abseil.io>`_
   library.
 
