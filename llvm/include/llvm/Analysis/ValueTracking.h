@@ -276,6 +276,14 @@ class Value;
   /// pointer, return 'len+1'.  If we can't, return 0.
   uint64_t GetStringLength(const Value *V, unsigned CharSize = 8);
 
+  /// This function returns call pointer argument that is considered the same by
+  /// aliasing rules. You CAN'T use it to replace one value with another.
+  const Value *getArgumentAliasingToReturnedPointer(ImmutableCallSite CS);
+  inline Value *getArgumentAliasingToReturnedPointer(CallSite CS) {
+    return const_cast<Value *>(
+        getArgumentAliasingToReturnedPointer(ImmutableCallSite(CS)));
+  }
+
   /// This method strips off any GEP address adjustments and pointer casts from
   /// the specified value, returning the original object being addressed. Note
   /// that the returned value has pointer type if the specified value does. If
@@ -569,6 +577,7 @@ class Value;
   Optional<bool> isImpliedCondition(const Value *LHS, const Value *RHS,
                                     const DataLayout &DL, bool LHSIsTrue = true,
                                     unsigned Depth = 0);
+
 } // end namespace llvm
 
 #endif // LLVM_ANALYSIS_VALUETRACKING_H

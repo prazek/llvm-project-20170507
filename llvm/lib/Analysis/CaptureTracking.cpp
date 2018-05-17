@@ -249,8 +249,12 @@ void llvm::PointerMayBeCaptured(const Value *V, CaptureTracker *Tracker) {
 
       // launder.invariant.group only captures pointer by returning it,
       // so the pointer wasn't captured if returned pointer is not captured.
-      // Note that adding similar special cases for intrinsics requires handling
-      // them in 'isEscapeSource' in BasicAA.
+      // This intrinsic is not marked as nocapture, because it would require
+      // to mark the argument as returned, which would make the launder useless.
+      // NOTE: CaptureTracking users should not assume that only functions
+      // marked with nocapture does not capture. This means that places like
+      // GetUnderlyingObject in ValueTracking or DecomposeGEPExpression
+      // in BasicAA also assume this aliasing property of the launder.
       if (CS.getIntrinsicID() == Intrinsic::launder_invariant_group) {
         AddUses(I);
         break;
