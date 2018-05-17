@@ -5,7 +5,8 @@
 // RUN: FileCheck --check-prefix=CHECK-LINK-REQ %s < %t.ll
 
 typedef __typeof__(sizeof(0)) size_t;
-void *operator new(size_t, void*) throw();
+void *operator new(size_t, void *) throw();
+using uintptr_t = unsigned long long;
 
 struct NotTrivialDtor {
   ~NotTrivialDtor();
@@ -17,7 +18,7 @@ struct DynamicBase1 {
 };
 
 struct DynamicDerived : DynamicBase1 {
-  void foo();
+  void foo() override;
 };
 
 struct DynamicBase2 {
@@ -28,8 +29,8 @@ struct DynamicBase2 {
 };
 
 struct DynamicDerivedMultiple : DynamicBase1, DynamicBase2 {
-  virtual void foo();
-  virtual void bar();
+  void foo() override;
+  void bar() override;
 };
 
 struct StaticBase {
@@ -47,9 +48,8 @@ struct DynamicFromVirtualStatic1 : virtual StaticBase {
 struct DynamicFromVirtualStatic2 : virtual StaticBase {
 };
 
-struct DynamicFrom2Virtuals :
-            DynamicFromVirtualStatic1,
-            DynamicFromVirtualStatic2 {
+struct DynamicFrom2Virtuals : DynamicFromVirtualStatic1,
+                              DynamicFromVirtualStatic2 {
 };
 
 // CHECK-NEW-LABEL: define void @_Z12LocalObjectsv()
@@ -88,7 +88,6 @@ struct DynamicFrom2Virtuals;
 // CHECK-CTORS-LABEL: define linkonce_odr void @_ZN20DynamicFrom2VirtualsC1Ev
 // CHECK-CTORS: call i8* @llvm.launder.invariant.group.p0i8(
 // CHECK-CTORS-LABEL: {{^}}}
-
 
 // CHECK-NEW-LABEL: define void @_Z9Pointers1v()
 // CHECK-NEW-NOT: @llvm.launder.invariant.group.p0i8(
@@ -134,7 +133,6 @@ struct DynamicBase1;
 // CHECK-CTORS-NOT: call i8* @llvm.launder.invariant.group.p0i8(
 // CHECK-CTORS-LABEL: {{^}}}
 
-
 struct DynamicDerived;
 
 // CHECK-CTORS-LABEL: define linkonce_odr void @_ZN14DynamicDerivedC2Ev(
@@ -164,13 +162,11 @@ struct DynamicDerivedMultiple;
 // CHECK-CTORS: call void @_ZN12DynamicBase2C2Ev(
 // CHECK-CTORS-NOT: @llvm.launder.invariant.group.p0i8
 
-
 // CHECK-CTORS: %[[THIS10:.*]] = bitcast %struct.DynamicDerivedMultiple* %[[THIS0]] to i32 (...)***
 // CHECK-CTORS: store {{.*}} @_ZTV22DynamicDerivedMultiple, i32 0, inrange i32 0, i32 2) {{.*}} %[[THIS10]]
 // CHECK-CTORS: %[[THIS11:.*]] = bitcast %struct.DynamicDerivedMultiple* %[[THIS0]] to i8*
 // CHECK-CTORS: %[[THIS_ADD:.*]] = getelementptr inbounds i8, i8* %[[THIS11]], i64 16
 // CHECK-CTORS: %[[THIS12:.*]]  = bitcast i8* %[[THIS_ADD]] to i32 (...)***
-
 
 // CHECK-CTORS: store {{.*}} @_ZTV22DynamicDerivedMultiple, i32 0, inrange i32 1, i32 2) {{.*}} %[[THIS12]]
 // CHECK-CTORS-LABEL: {{^}}}
@@ -182,9 +178,10 @@ struct DynamicFromStatic;
 
 struct A {
   virtual void foo();
+  int m;
 };
 struct B : A {
-  virtual void foo();
+  void foo() override;
 };
 
 union U {
@@ -209,7 +206,7 @@ void UnionsBarriers(U *u) {
   // CHECK-NEW: call i8* @llvm.launder.invariant.group.p0i8(i8*
   // CHECK-NEW: call void @_Z2g2P1A(%struct.A*
   g2(&u->b);
-  // CHECK-NEW: call void @_Z9changeToAP1U(%union.U* 
+  // CHECK-NEW: call void @_Z9changeToAP1U(%union.U*
   changeToA(u);
   // CHECK-NEW: call i8* @llvm.launder.invariant.group.p0i8(i8*
   // call void @_Z2g2P1A(%struct.A* %a)
@@ -294,11 +291,197 @@ void UnionsBarrier3(U3 &u) {
   take(u.v3);
 }
 
+// CHECK-NEW-LABEL: define void @_Z7comparev()
+void compare() {
+  A *a = new A;
+  a->foo();
+  // CHECK-NEW: call i8* @llvm.launder.invariant.group.p0i8(i8*
+  A *b = new (a) B;
+
+  // CHECK-NEW: %[[a:.*]] = call i8* @llvm.strip.invariant.group.p0i8(i8*
+  // CHECK-NEW: %[[a2:.*]] = bitcast i8* %[[a]] to %struct.A*
+  // CHECK-NEW: %[[b:.*]] = call i8* @llvm.strip.invariant.group.p0i8(i8*
+  // CHECK-NEW: %[[b2:.*]] = bitcast i8* %[[b]] to %struct.A*
+  // CHECK-NEW: %cmp = icmp eq %struct.A* %[[a2]], %[[b2]]
+  if (a == b)
+    b->foo();
+}
+
+// CHECK-NEW-LABEL: compare2
+bool compare2(A *a, A *a2) {
+  // CHECK-NEW: %[[a:.*]] = call i8* @llvm.strip.invariant.group.p0i8(i8*
+  // CHECK-NEW: %[[a2:.*]] = bitcast i8* %[[a]] to %struct.A*
+  // CHECK-NEW: %[[b:.*]] = call i8* @llvm.strip.invariant.group.p0i8(i8*
+  // CHECK-NEW: %[[b2:.*]] = bitcast i8* %[[b]] to %struct.A*
+  // CHECK-NEW: %cmp = icmp ult %struct.A* %[[a2]], %[[b2]]
+  return a < a2;
+}
+// CHECK-NEW-LABEL: compareIntPointers
+bool compareIntPointers(int *a, int *b) {
+  // CHECK-NEW-NOT: call i8* @llvm.strip.invariant.group
+  return a == b;
+}
+
+struct HoldingOtherVirtuals {
+  B b;
+};
+
+// There is no need to add barriers for comparision of pointer to classes
+// that are not dynamic.
+// CHECK-NEW-LABEL: compare5
+bool compare5(HoldingOtherVirtuals *a, HoldingOtherVirtuals *b) {
+  // CHECK-NEW-NOT: call i8* @llvm.strip.invariant.group
+  return a == b;
+}
+// CHECK-NEW-LABEL: compareNull
+bool compareNull(A *a) {
+  // CHECK-NEW-NOT: call i8* @llvm.strip.invariant.group
+
+  if (a != nullptr)
+    return false;
+  if (!a)
+    return false;
+  return a == nullptr;
+}
+
+struct X;
+// We have to also introduce the barriers if comparing pointers to incomplete
+// objects
+// CHECK-NEW-LABEL: define zeroext i1 @_Z8compare4P1XS0_
+bool compare4(X *x, X *x2) {
+  // CHECK-NEW: %[[x:.*]] = call i8* @llvm.strip.invariant.group.p0i8(i8*
+  // CHECK-NEW: %[[xp:.*]] = bitcast i8* %[[x]] to %struct.X*
+  // CHECK-NEW: %[[x2:.*]] = call i8* @llvm.strip.invariant.group.p0i8(i8*
+  // CHECK-NEW: %[[x2p:.*]] = bitcast i8* %[[x2]] to %struct.X*
+  // CHECK-NEW: %cmp = icmp eq %struct.X* %[[xp]], %[[x2p]]
+  return x == x2;
+}
+
+// CHECK-NEW-LABEL: define void @_Z7member1P20HoldingOtherVirtuals(
+void member1(HoldingOtherVirtuals *p) {
+
+  // CHECK-NEW-NOT: call i8* @llvm.strip.invariant.group.p0i8(
+  (void)p->b;
+}
+
+// CHECK-NEW-LABEL: member2
+void member2(A *a) {
+  // CHECK-NEW: call i8* @llvm.strip.invariant.group.p0i8
+  (void)a->m;
+}
+
+// Check if from comparison of addresses of member we can't infer the equality
+// of ap and bp.
+// CHECK-NEW-LABEL: @_Z18testCompareMembersv(
+void testCompareMembers() {
+  // CHECK-NEW:    [[AP:%.*]] = alloca %struct.A*
+  // CHECK-NEW:    [[APM:%.*]] = alloca i32*
+  // CHECK-NEW:    [[BP:%.*]] = alloca %struct.B*
+  // CHECK-NEW:    [[BPM:%.*]] = alloca i32*
+
+  A *ap = new A;
+  // CHECK-NEW:   call void %{{.*}}(%struct.A* %{{.*}})
+  ap->foo();
+  // CHECK-NEW:    [[TMP7:%.*]] = load %struct.A*, %struct.A** [[AP]]
+  // CHECK-NEW:    [[TMP8:%.*]] = bitcast %struct.A* [[TMP7]] to i8*
+  // CHECK-NEW:    [[TMP9:%.*]] = call i8* @llvm.strip.invariant.group.p0i8(i8* [[TMP8]])
+  // CHECK-NEW:    [[TMP10:%.*]] = bitcast i8* [[TMP9]] to %struct.A*
+  // CHECK-NEW:    [[M:%.*]] = getelementptr inbounds [[STRUCT_A:%.*]], %struct.A* [[TMP10]], i32 0, i32 1
+  // CHECK-NEW:    store i32* [[M]], i32** [[APM]]
+  int *const apm = &ap->m;
+
+  B *bp = new (ap) B;
+
+  // CHECK-NEW:    [[TMP20:%.*]] = load %struct.B*, %struct.B** [[BP]]
+  // CHECK-NEW:    [[TMP21:%.*]] = bitcast %struct.B* [[TMP20]] to %struct.A*
+  // CHECK-NEW:    [[TMP22:%.*]] = bitcast %struct.A* [[TMP21]] to i8*
+  // CHECK-NEW:    [[TMP23:%.*]] = call i8* @llvm.strip.invariant.group.p0i8(i8* [[TMP22]])
+  // CHECK-NEW:    [[TMP24:%.*]] = bitcast i8* [[TMP23]] to %struct.A*
+  // CHECK-NEW:    [[M4:%.*]] = getelementptr inbounds [[STRUCT_A]], %struct.A* [[TMP24]], i32 0, i32 1
+  // CHECK-NEW:    store i32* [[M4]], i32** [[BPM]]
+  int *const bpm = &bp->m;
+
+  // CHECK-NEW:    [[TMP25:%.*]] = load i32*, i32** [[APM]]
+  // CHECK-NEW:    [[TMP26:%.*]] = load i32*, i32** [[BPM]]
+  // CHECK-NEW-NOT: strip.invariant.group
+  // CHECK-NEW-NOT: launder.invariant.group
+  // CHECK-NEW:    [[CMP:%.*]] = icmp eq i32* [[TMP25]], [[TMP26]]
+  if (apm == bpm) {
+    bp->foo();
+  }
+}
+
+// CHECK-NEW-LABEL: define void @_Z9testCast1P1A(%struct.A*
+void testCast1(A *a) {
+  // Here we get rid of dynamic info
+  // CHECK-NEW: call i8* @llvm.strip.invariant.group
+  auto *v = (void *)a;
+
+  // CHECK-NEW: call i8* @llvm.strip.invariant.group
+  auto i2 = (uintptr_t)a;
+  (void)i2;
+
+  // CHECK-NEW-NOT: @llvm.strip.invariant.group
+  // CHECK-NEW-NOT: @llvm.launder.invariant.group
+
+  // The information is already stripped
+  auto i = (uintptr_t)v;
+}
+
+struct Incomplete;
+// CHECK-NEW-LABEL: define void @_Z9testCast2P10Incomplete(%struct.Incomplete*
+void testCast2(Incomplete *I) {
+  // Here we get rid of dynamic info
+  // CHECK-NEW: call i8* @llvm.strip.invariant.group
+  auto *v = (void *)I;
+
+  // CHECK-NEW: call i8* @llvm.strip.invariant.group
+  auto i2 = (uintptr_t)I;
+  (void)i2;
+
+  // CHECK-NEW-NOT: @llvm.strip.invariant.group
+  // CHECK-NEW-NOT: @llvm.launder.invariant.group
+
+  // The information is already stripped
+  auto i = (uintptr_t)v;
+}
+
+// CHECK-NEW-LABEL: define void @_Z9testCast3y(
+void testCast3(uintptr_t i) {
+  // CHECK-NEW-NOT: @llvm.strip.invariant.group
+  // CHECK-NEW: @llvm.launder.invariant.group
+  A *a3 = (A *)i;
+  (void)a3;
+
+  // CHECK-NEW: @llvm.launder.invariant.group
+  auto *v2 = (void *)i;
+  // CHECK-NEW-NOT: @llvm.launder.invariant.group
+  A *a2 = (A *)v2;
+  (void)a2;
+
+  // CHECK-NEW-LABEL: ret void
+}
+
+// CHECK-NEW-LABEL: define void @_Z9testCast4y(
+void testCast4(uintptr_t i) {
+  // CHECK-NEW-NOT: @llvm.strip.invariant.group
+  // CHECK-NEW: @llvm.launder.invariant.group
+  auto *a3 = (Incomplete *)i;
+  (void)a3;
+
+  // CHECK-NEW: @llvm.launder.invariant.group
+  auto *v2 = (void *)i;
+  // CHECK-NEW-NOT: @llvm.launder.invariant.group
+  auto *a2 = (Incomplete *)v2;
+  (void)a2;
+
+  // CHECK-NEW-LABEL: ret void
+}
+
 /** DTORS **/
 // CHECK-DTORS-LABEL: define linkonce_odr void @_ZN10StaticBaseD2Ev(
 // CHECK-DTORS-NOT: call i8* @llvm.launder.invariant.group.p0i8(
 // CHECK-DTORS-LABEL: {{^}}}
-
 
 // CHECK-DTORS-LABEL: define linkonce_odr void @_ZN25DynamicFromVirtualStatic2D2Ev(
 // CHECK-DTORS-NOT: invariant.barrier
@@ -307,7 +490,6 @@ void UnionsBarrier3(U3 &u) {
 // CHECK-DTORS-LABEL: define linkonce_odr void @_ZN17DynamicFromStaticD2Ev
 // CHECK-DTORS-NOT: call i8* @llvm.launder.invariant.group.p0i8(
 // CHECK-DTORS-LABEL: {{^}}}
-
 
 // CHECK-DTORS-LABEL: define linkonce_odr void @_ZN22DynamicDerivedMultipleD2Ev(
 
@@ -323,10 +505,8 @@ void UnionsBarrier3(U3 &u) {
 // CHECK-DTORS-NOT: call i8* @llvm.launder.invariant.group.p0i8(
 // CHECK-DTORS-LABEL: {{^}}}
 
-
 // CHECK-LINK-REQ: !llvm.module.flags = !{![[FIRST:[0-9]+]], ![[SEC:[0-9]+]]{{.*}}}
 
 // CHECK-LINK-REQ: ![[FIRST]] = !{i32 1, !"StrictVTablePointers", i32 1}
 // CHECK-LINK-REQ: ![[SEC]] = !{i32 3, !"StrictVTablePointersRequirement", ![[META:.*]]}
 // CHECK-LINK-REQ: ![[META]] = !{!"StrictVTablePointers", i32 1}
-

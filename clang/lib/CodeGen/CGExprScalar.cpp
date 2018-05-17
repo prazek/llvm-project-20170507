@@ -1618,6 +1618,13 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
                                       CE->getLocStart());
     }
 
+    const CXXRecordDecl *SourceClassDecl =
+        E->getType().getTypePtr()->getPointeeCXXRecordDecl();
+    if (CGF.CGM.getCodeGenOpts().StrictVTablePointers && SourceClassDecl &&
+        SourceClassDecl->mayBeDynamicClass()) {
+      Src = Builder.CreateStripInvariantGroup(Src);
+    }
+
     return Builder.CreateBitCast(Src, DstTy);
   }
   case CK_AddressSpaceConversion: {
@@ -1754,12 +1761,25 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     llvm::Value* IntResult =
       Builder.CreateIntCast(Src, MiddleTy, InputSigned, "conv");
 
-    return Builder.CreateIntToPtr(IntResult, DestLLVMTy);
-  }
-  case CK_PointerToIntegral:
-    assert(!DestTy->isBooleanType() && "bool should use PointerToBool");
-    return Builder.CreatePtrToInt(Visit(E), ConvertType(DestTy));
+    auto *IntToPtr = Builder.CreateIntToPtr(IntResult, DestLLVMTy);
 
+    if (CGF.CGM.getCodeGenOpts().StrictVTablePointers)
+      return Builder.CreateLaunderInvariantGroup(IntToPtr);
+
+    return IntToPtr;
+  }
+  case CK_PointerToIntegral: {
+    assert(!DestTy->isBooleanType() && "bool should use PointerToBool");
+    auto *PtrExpr = Visit(E);
+    const CXXRecordDecl *ClassDecl =
+        E->getType().getTypePtr()->getPointeeCXXRecordDecl();
+    if (CGF.CGM.getCodeGenOpts().StrictVTablePointers && ClassDecl &&
+        ClassDecl->mayBeDynamicClass()) {
+      PtrExpr = Builder.CreateStripInvariantGroup(PtrExpr);
+    }
+
+    return Builder.CreatePtrToInt(PtrExpr, ConvertType(DestTy));
+  }
   case CK_ToVoid: {
     CGF.EmitIgnoredExpr(E);
     return nullptr;
@@ -3238,6 +3258,22 @@ Value *ScalarExprEmitter::EmitCompare(const BinaryOperator *E,
       Result = Builder.CreateICmp(SICmpOpc, LHS, RHS, "cmp");
     } else {
       // Unsigned integers and pointers.
+
+      if (CGF.CGM.getCodeGenOpts().StrictVTablePointers &&
+          !isa<llvm::ConstantPointerNull>(LHS) &&
+          !isa<llvm::ConstantPointerNull>(RHS)) {
+        // Based on comparisons of pointers to dynamic objects, the optimizer
+        // can replace one pointer with another, which might be incorrect in
+        // presence of invariant groups. Comparison with null is safe.
+
+        if (auto *RD = LHSTy->getPointeeCXXRecordDecl())
+          if (RD->mayBeDynamicClass())
+            LHS = Builder.CreateStripInvariantGroup(LHS);
+        if (auto *RD = RHSTy->getPointeeCXXRecordDecl())
+          if (RD->mayBeDynamicClass())
+            RHS = Builder.CreateStripInvariantGroup(RHS);
+      }
+
       Result = Builder.CreateICmp(UICmpOpc, LHS, RHS, "cmp");
     }
 

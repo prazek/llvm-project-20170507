@@ -775,6 +775,10 @@ public:
     return data().Polymorphic || data().NumVBases != 0;
   }
 
+  bool mayBeDynamicClass() const {
+    return !isCompleteDefinition() || isDynamicClass();
+  }
+
   void setIsParsingBaseSpecifiers() { data().IsParsingBaseSpecifiers = true; }
 
   bool isParsingBaseSpecifiers() const {

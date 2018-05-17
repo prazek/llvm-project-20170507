@@ -3396,8 +3396,9 @@ const Value *llvm::getArgumentAliasingToReturnedPointer(ImmutableCallSite CS) {
 }
 
 bool llvm::isIntrinsicReturningPointerAliasingArgumentWithoutCapturing(
-      ImmutableCallSite CS) {
-  return CS.getIntrinsicID() == Intrinsic::launder_invariant_group;
+    ImmutableCallSite CS) {
+  return CS.getIntrinsicID() == Intrinsic::launder_invariant_group ||
+         CS.getIntrinsicID() == Intrinsic::strip_invariant_group;
 }
 
 /// \p PN defines a loop-variant pointer to an object.  Check if the
@@ -3446,8 +3447,15 @@ Value *llvm::GetUnderlyingObject(Value *V, const DataLayout &DL,
       return V;
     } else {
       if (auto CS = CallSite(V)) {
-        // Note: getArgumentAliasingToReturnedPointer keeps CaptureTracking in
-        // sync, which is needed for correctness.
+        // CaptureTracking can know about special capturing properties of some
+        // intrinsics like launder.invariant.group, that can't be expressed with
+        // the attributes, but have properties like returning aliasing pointer.
+        // Because some analysis may assume that nocaptured pointer is not
+        // returned from some special intrinsic (because function would have to
+        // be marked with returns attribute), it is crucial to use this function
+        // because it should be in sync with CaptureTracking. Not using it may
+        // cause weird miscompilations where 2 aliasing pointers are assumed to
+        // noalias.
         if (auto *RP = getArgumentAliasingToReturnedPointer(CS)) {
           V = RP;
           continue;
