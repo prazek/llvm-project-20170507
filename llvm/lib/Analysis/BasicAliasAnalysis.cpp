@@ -132,16 +132,8 @@ static bool isNonEscapingLocalObject(const Value *V) {
 /// Returns true if the pointer is one which would have been considered an
 /// escape by isNonEscapingLocalObject.
 static bool isEscapeSource(const Value *V) {
-  if (auto CS = ImmutableCallSite(V)) {
-    // launder_invariant_group captures its argument only by returning it,
-    // so it might not be considered an escape by isNonEscapingLocalObject.
-    // Note that adding similar special cases for intrinsics in CaptureTracking
-    // requires handling them here too.
-    if (CS.getIntrinsicID() == Intrinsic::launder_invariant_group)
-      return false;
-
+  if (ImmutableCallSite(V))
     return true;
-  }
 
   if (isa<Argument>(V))
     return true;
@@ -438,11 +430,14 @@ bool BasicAAResult::DecomposeGEPExpression(const Value *V,
 
     const GEPOperator *GEPOp = dyn_cast<GEPOperator>(Op);
     if (!GEPOp) {
-      if (auto CS = ImmutableCallSite(V))
-        if (const Value *RV = CS.getReturnedArgOperand()) {
-          V = RV;
+      if (auto CS = ImmutableCallSite(V)) {
+        // Note: getArgumentAliasingToReturnedPointer keeps CaptureTracking in
+        // sync, which is needed for correctness.
+        if (auto *RP = getArgumentAliasingToReturnedPointer(CS)) {
+          V = RP;
           continue;
         }
+      }
 
       // If it's not a GEP, hand it off to SimplifyInstruction to see if it
       // can come up with something. This matches what GetUnderlyingObject does.
