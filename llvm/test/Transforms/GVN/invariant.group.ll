@@ -51,6 +51,17 @@ entry:
     ret i8 %b
 }
 
+; CHECK-LABEL: define i1 @proveEqualityForStrip(
+define i1 @proveEqualityForStrip(i8* %a) {
+; FIXME: This call can be removed.
+; CHECK: %b1 = call i8* @llvm.strip.invariant.group.p0i8(i8* %a)
+  %b1 = call i8* @llvm.strip.invariant.group.p0i8(i8* %a)
+; CHECK-NOT: llvm.strip.invariant.group
+  %b2 = call i8* @llvm.strip.invariant.group.p0i8(i8* %a)
+  %r = icmp eq i8* %b1, %b2
+; CHECK: ret i1 true
+  ret i1 %r
+}
 ; CHECK-LABEL: define i8 @unoptimizable1() {
 define i8 @unoptimizable1() {
 entry:
@@ -437,10 +448,10 @@ declare void @_ZN1AC1Ev(%struct.A*)
 declare void @fooBit(i1*, i1)
 
 declare i8* @llvm.launder.invariant.group.p0i8(i8*)
-
-; Function Attrs: nounwind
-declare void @llvm.assume(i1 %cmp.vtables) #0
+declare i8* @llvm.strip.invariant.group.p0i8(i8*)
 
 
-attributes #0 = { nounwind }
+declare void @llvm.assume(i1 %cmp.vtables)
+
+
 !0 = !{}
