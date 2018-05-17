@@ -3390,7 +3390,8 @@ const Value *llvm::getArgumentAliasingToReturnedPointer(ImmutableCallSite CS) {
   if (const Value *RV = CS.getReturnedArgOperand())
     return RV;
   // This can be used only as a aliasing property.
-  if (CS.getIntrinsicID() == Intrinsic::launder_invariant_group)
+  if (CS.getIntrinsicID() == Intrinsic::launder_invariant_group ||
+      CS.getIntrinsicID() == Intrinsic::strip_invariant_group)
     return CS.getArgOperand(0);
   return nullptr;
 }
