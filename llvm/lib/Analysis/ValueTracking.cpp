@@ -1956,8 +1956,8 @@ bool isKnownNonZero(const Value *V, unsigned Depth, const Query &Q) {
     if (auto CS = ImmutableCallSite(V)) {
       if (CS.isReturnNonNull())
         return true;
-      if (CS.getIntrinsicID() == Intrinsic::ID::launder_invariant_group)
-        return isKnownNonZero(CS->getOperand(0), Depth + 1, Q);
+      if (const auto *RP = getArgumentAliasingToReturnedPointer(CS))
+        return isKnownNonZero(RP, Depth + 1, Q);
     }
   }
 
@@ -3384,6 +3384,17 @@ uint64_t llvm::GetStringLength(const Value *V, unsigned CharSize) {
   return Len == ~0ULL ? 1 : Len;
 }
 
+const Value *llvm::getArgumentAliasingToReturnedPointer(ImmutableCallSite CS) {
+  assert(CS &&
+         "getArgumentAliasingToReturnedPointer only works on nonnull CallSite");
+  if (const Value *RV = CS.getReturnedArgOperand())
+    return RV;
+  // This can be used only as a aliasing property.
+  if (CS.getIntrinsicID() == Intrinsic::launder_invariant_group)
+    return CS.getArgOperand(0);
+  return nullptr;
+}
+
 /// \p PN defines a loop-variant pointer to an object.  Check if the
 /// previous iteration of the loop was referring to the same object as \p PN.
 static bool isSameUnderlyingObjectInLoop(const PHINode *PN,
@@ -3429,11 +3440,14 @@ Value *llvm::GetUnderlyingObject(Value *V, const DataLayout &DL,
       // An alloca can't be further simplified.
       return V;
     } else {
-      if (auto CS = CallSite(V))
-        if (Value *RV = CS.getReturnedArgOperand()) {
-          V = RV;
+      if (auto CS = CallSite(V)) {
+        // Note: getArgumentAliasingToReturnedPointer keeps CaptureTracking in
+        // sync, which is needed for correctness.
+        if (auto *RP = getArgumentAliasingToReturnedPointer(CS)) {
+          V = RP;
           continue;
         }
+      }
 
       // See if InstructionSimplify knows any relevant tricks.
       if (Instruction *I = dyn_cast<Instruction>(V))
