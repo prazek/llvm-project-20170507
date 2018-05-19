@@ -1956,9 +1956,8 @@ bool isKnownNonZero(const Value *V, unsigned Depth, const Query &Q) {
     if (auto CS = ImmutableCallSite(V)) {
       if (CS.isReturnNonNull())
         return true;
-      // FIXME: This could perhaps use getArgumentAliasingToReturnedPointer
-      if (CS.getIntrinsicID() == Intrinsic::ID::launder_invariant_group)
-        return isKnownNonZero(CS->getOperand(0), Depth + 1, Q);
+      if (const auto *RP = getArgumentAliasingToReturnedPointer(CS))
+        return isKnownNonZero(RP, Depth + 1, Q);
     }
   }
 
@@ -3386,7 +3385,8 @@ uint64_t llvm::GetStringLength(const Value *V, unsigned CharSize) {
 }
 
 const Value *llvm::getArgumentAliasingToReturnedPointer(ImmutableCallSite CS) {
-  assert(CS);
+  assert(CS &&
+         "getArgumentAliasingToReturnedPointer only works on nonnull CallSite");
   if (const Value *RV = CS.getReturnedArgOperand())
     return RV;
   // This can be used only as a aliasing property.
