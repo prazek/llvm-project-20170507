@@ -252,7 +252,7 @@ void llvm::PointerMayBeCaptured(const Value *V, CaptureTracker *Tracker) {
       // This intrinsic is not marked as nocapture, because it would require
       // to mark the argument as returned, which would make the launder useless.
       // NOTE: CaptureTracking users should not assume that only functions
-      // marked with nocapture does not capture. This means that places like
+      // marked with nocapture do not capture. This means that places like
       // GetUnderlyingObject in ValueTracking or DecomposeGEPExpression
       // in BasicAA also assume this aliasing property of the launder.
       if (CS.getIntrinsicID() == Intrinsic::launder_invariant_group) {
