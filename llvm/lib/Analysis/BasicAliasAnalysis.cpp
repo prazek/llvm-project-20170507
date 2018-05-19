@@ -431,6 +431,8 @@ bool BasicAAResult::DecomposeGEPExpression(const Value *V,
     const GEPOperator *GEPOp = dyn_cast<GEPOperator>(Op);
     if (!GEPOp) {
       if (auto CS = ImmutableCallSite(V)) {
+        // Note: getArgumentAliasingToReturnedPointer keeps CaptureTracking in
+        // sync, which is needed for correctness.
         if (auto *RP = getArgumentAliasingToReturnedPointer(CS)) {
           V = RP;
           continue;

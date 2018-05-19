@@ -3441,6 +3441,8 @@ Value *llvm::GetUnderlyingObject(Value *V, const DataLayout &DL,
       return V;
     } else {
       if (auto CS = CallSite(V)) {
+        // Note: getArgumentAliasingToReturnedPointer keeps CaptureTracking in
+        // sync, which is needed for correctness.
         if (auto *RP = getArgumentAliasingToReturnedPointer(CS)) {
           V = RP;
           continue;

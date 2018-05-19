@@ -577,7 +577,6 @@ class Value;
   Optional<bool> isImpliedCondition(const Value *LHS, const Value *RHS,
                                     const DataLayout &DL, bool LHSIsTrue = true,
                                     unsigned Depth = 0);
-
 } // end namespace llvm
 
 #endif // LLVM_ANALYSIS_VALUETRACKING_H
