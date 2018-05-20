@@ -1,5 +1,6 @@
 // RUN: %clang_cc1 %s -I%S -triple=x86_64-apple-darwin10 -std=c++98 -emit-llvm -o %t
 // RUN: %clang_cc1 %s -I%S -triple=x86_64-apple-darwin10 -std=c++98 -O2 -disable-llvm-passes -emit-llvm -o %t.opt
+// RUN: %clang_cc1 %s -I%S -triple=x86_64-apple-darwin10 -std=c++98 -O2 -disable-llvm-passes -emit-llvm -o %t.vtable -fforce-emit-vtables
 // RUN: FileCheck --check-prefix=CHECK-TEST1 %s < %t
 // RUN: FileCheck --check-prefix=CHECK-TEST2 %s < %t
 // RUN: FileCheck --check-prefix=CHECK-TEST5 %s < %t
@@ -13,10 +14,13 @@
 // RUN: FileCheck --check-prefix=CHECK-TEST15 %s < %t.opt
 // RUN: FileCheck --check-prefix=CHECK-TEST16 %s < %t.opt
 // RUN: FileCheck --check-prefix=CHECK-TEST17 %s < %t.opt
+// RUN: FileCheck --check-prefix=CHECK-FORCE-EMIT %s < %t.vtable
+
 
 #include <typeinfo>
 
 // CHECK-TEST1: @_ZTVN5Test11AE = external unnamed_addr constant
+// CHECK-FORCE-EMIT-DAG: @_ZTVN5Test11AE = available_externally unnamed_addr constant
 namespace Test1 {
 
 struct A {
@@ -213,6 +217,7 @@ namespace Test10 {
 
 // because A's key function is defined here, vtable is generated in this TU
 // CHECK-TEST10-DAG: @_ZTVN6Test101AE = unnamed_addr constant
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test101AE = unnamed_addr constant
 struct A {
   virtual void foo();
   virtual void bar();
@@ -221,6 +226,7 @@ void A::foo() {}
 
 // Because key function is inline we will generate vtable as linkonce_odr.
 // CHECK-TEST10-DAG: @_ZTVN6Test101DE = linkonce_odr unnamed_addr constant
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test101DE = linkonce_odr unnamed_addr constant
 struct D : A {
   void bar();
 };
@@ -237,6 +243,7 @@ struct B : A {
 // can't guarantee that we will be able to refer to bar from name
 // so (at the moment) we can't emit vtable available_externally.
 // CHECK-TEST10-DAG: @_ZTVN6Test101CE = external unnamed_addr constant
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test101CE = available_externally unnamed_addr constant
 struct C : A {
   void bar() {}               // defined in body - not key function
   virtual inline void gar();  // inline in body - not key function
@@ -245,6 +252,8 @@ struct C : A {
 
 // no key function, vtable will be generated everywhere it will be used
 // CHECK-TEST10-DAG: @_ZTVN6Test101EE = linkonce_odr unnamed_addr constant
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test101EE = linkonce_odr unnamed_addr constant
+
 struct E : A {};
 
 void g(A& a) {
@@ -298,11 +307,13 @@ void g() {
 namespace Test12 {
 
 // CHECK-TEST12: @_ZTVN6Test121AE = external unnamed_addr constant
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test121AE = available_externally unnamed_addr constant
 struct A {
   virtual void foo();
   virtual ~A() {}
 };
 // CHECK-TEST12: @_ZTVN6Test121BE = external unnamed_addr constant
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test121BE = available_externally unnamed_addr constant
 struct B : A {
   void foo();
 };
@@ -319,6 +330,9 @@ namespace Test13 {
 
 // CHECK-TEST13-DAG: @_ZTVN6Test131AE = available_externally unnamed_addr constant
 // CHECK-TEST13-DAG: @_ZTVN6Test131BE = external unnamed_addr constant
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test131AE = available_externally unnamed_addr constant
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test131BE = available_externally unnamed_addr constant
+
 struct A {
   virtual ~A();
 };
@@ -371,6 +385,8 @@ namespace Test16 {
 // generate available_externally vtable for it.
 // CHECK-TEST16-DAG: @_ZTVN6Test161SE = external unnamed_addr constant
 // CHECK-TEST16-DAG: @_ZTVN6Test162S2E = available_externally
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test161SE = external unnamed_addr constant
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test162S2E = available_externally
 
 struct S {
   __attribute__((visibility("hidden"))) virtual void doStuff();
@@ -395,6 +411,10 @@ namespace Test17 {
 // This test checks if we emit vtables opportunistically.
 // CHECK-TEST17-DAG: @_ZTVN6Test171AE = available_externally
 // CHECK-TEST17-DAG: @_ZTVN6Test171BE = external
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test171AE = available_externally
+// CHECK-FORCE-EMIT-DAG: @_ZTVN6Test171BE = available_externally
+// CHECK-FORCE-EMIT-DAG: define linkonce_odr void @_ZN6Test171BD1Ev(
+// CHECK-FORCE-EMIT-DAG: define linkonce_odr void @_ZN6Test171BD0Ev(
 
 struct A {
   virtual void key();
