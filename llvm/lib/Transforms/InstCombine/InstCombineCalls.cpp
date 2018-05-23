@@ -1167,6 +1167,38 @@ static Instruction *simplifyMaskedGather(IntrinsicInst &II, InstCombiner &IC) {
   return nullptr;
 }
 
+/// This function transforms launder.invariant.group and strip.invariant.group
+/// like:
+/// launder(launder(%x)) -> launder(%x)       (the result is not the argument)
+/// launder(strip(%x)) -> launder(%x)
+/// strip(strip(%x)) -> strip(%x)             (the result is not the argument)
+/// strip(launder(%x)) -> strip(%x)
+/// This is legal because it preserves the most recent information about
+/// the presence or absence of invariant.group.
+static Instruction *simplifyInvariantGroupIntrinsic(IntrinsicInst &II,
+                                                    InstCombiner &IC) {
+  auto *Arg = II.getArgOperand(0);
+  auto *StrippedArg = Arg->stripPointerCasts();
+  auto *StrippedInvariantGroupsArg = Arg->stripPointerCastsAndInvariantGroups();
+  if (StrippedArg == StrippedInvariantGroupsArg)
+    return nullptr; // No launders/strips to remove.
+
+  Value *Result = nullptr;
+
+  if (II.getIntrinsicID() == Intrinsic::launder_invariant_group)
+    Result = IC.Builder.CreateLaunderInvariantGroup(StrippedInvariantGroupsArg);
+  else if (II.getIntrinsicID() == Intrinsic::strip_invariant_group)
+    Result = IC.Builder.CreateStripInvariantGroup(StrippedInvariantGroupsArg);
+  else
+    llvm_unreachable(
+        "simplifyInvariantGroupIntrinsic only handles launder and strip");
+
+  if (Result->getType() != II.getType())
+    Result = IC.Builder.CreateBitCast(Result, II.getType());
+
+  return cast<Instruction>(Result);
+}
+
 static Instruction *simplifyMaskedScatter(IntrinsicInst &II, InstCombiner &IC) {
   // If the mask is all zeros, a scatter does nothing.
   auto *ConstMask = dyn_cast<Constant>(II.getArgOperand(3));
@@ -1841,7 +1873,11 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     return simplifyMaskedGather(*II, *this);
   case Intrinsic::masked_scatter:
     return simplifyMaskedScatter(*II, *this);
-
+  case Intrinsic::launder_invariant_group:
+  case Intrinsic::strip_invariant_group:
+    if (auto *SkippedBarrier = simplifyInvariantGroupIntrinsic(*II, *this))
+      return replaceInstUsesWith(*II, SkippedBarrier);
+    break;
   case Intrinsic::powi:
     if (ConstantInt *Power = dyn_cast<ConstantInt>(II->getArgOperand(1))) {
       // 0 and 1 are handled in instsimplify
