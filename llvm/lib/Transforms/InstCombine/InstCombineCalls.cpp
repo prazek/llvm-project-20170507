@@ -1197,6 +1197,21 @@ static Instruction *simplifyMaskedGather(IntrinsicInst &II, InstCombiner &IC) {
   return nullptr;
 }
 
+static Instruction *simplifyInvariantGroupIntrinsic(IntrinsicInst &II,
+                                                    InstCombiner &IC) {
+  auto *StrippedInvariantGroupsArg =
+    II.getArgOperand(0)->stripPointerCastsAndInvariantGroups();
+  auto *StrippedArg = II.getOperand(0)->stripPointerCasts();
+  if (StrippedInvariantGroupsArg == StrippedArg)
+    return nullptr;
+
+  if (II.getIntrinsicID() == Intrinsic::launder_invariant_group)
+    return cast<Instruction>(IC.Builder.CreateLaunderInvariantGroup(StrippedInvariantGroupsArg));
+  if (II.getIntrinsicID() == Intrinsic::strip_invariant_group)
+    return cast<Instruction>(IC.Builder.CreateStripInvariantGroup(StrippedInvariantGroupsArg));
+  llvm_unreachable("simplifyInvariantGroupIntrinsic only handles launder and strip");
+}
+
 static Instruction *simplifyMaskedScatter(IntrinsicInst &II, InstCombiner &IC) {
   // If the mask is all zeros, a scatter does nothing.
   auto *ConstMask = dyn_cast<Constant>(II.getArgOperand(3));
@@ -1809,7 +1824,9 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     return simplifyMaskedGather(*II, *this);
   case Intrinsic::masked_scatter:
     return simplifyMaskedScatter(*II, *this);
-
+  case Intrinsic::launder_invariant_group:
+  case Intrinsic::strip_invariant_group:
+    return simplifyInvariantGroupIntrinsic(*II, *this);
   case Intrinsic::powi:
     if (ConstantInt *Power = dyn_cast<ConstantInt>(II->getArgOperand(1))) {
       // 0 and 1 are handled in instsimplify

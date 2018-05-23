@@ -30,10 +30,6 @@ define i8 addrspace(42)* @simplifyUndefLaunder2() {
   ret i8 addrspace(42)* %b2
 }
 
-declare i8* @llvm.launder.invariant.group.p0i8(i8*)
-declare i8 addrspace(42)* @llvm.launder.invariant.group.p42i8(i8 addrspace(42)*)
-
-
 ; CHECK-LABEL: define i8* @simplifyNullStrip()
 define i8* @simplifyNullStrip() {
 ; CHECK-NEXT: ret i8* null
@@ -63,6 +59,38 @@ define i8 addrspace(42)* @simplifyUndefStrip2() {
   ret i8 addrspace(42)* %b2
 }
 
+; CHECK-LABEL: define i1 @simplifyLaunderOfLaunder(
+define i8* @simplifyLaunderOfLaunder(i8* %a) {
+; CHECK:   %a3 = call i8* @llvm.launder.invariant.group.p0i8(i8* %a2)
+; CHECK-NOT: llvm.launder.invariant.group
+  %a2 = call i8* @llvm.launder.invariant.group.p0i8(i8* %a)
+  %a3 = call i8* @llvm.launder.invariant.group.p0i8(i8* %a2)
+  ret i8* %a3
+}
+
+; CHECK-LABEL: define i1 @simplifyStripOfLaunder(
+define i8* @simplifyStripOfLaunder(i8* %a) {
+; CHECK-NOT: llvm.launder.invariant.group
+; CHECK:   %a3 = call i8* @llvm.strip.invariant.group.p0i8(i8* %aa)
+  %a2 = call i8* @llvm.launder.invariant.group.p0i8(i8* %a)
+  %a3 = call i8* @llvm.strip.invariant.group.p0i8(i8* %a2)
+  ret i8* %a3
+}
+
+; CHECK-LABEL: define i1 @simplifyForCompare(
+define i1 @simplifyForCompare(i8* %a, i8* %b) {
+  %a2 = call i8* @llvm.launder.invariant.group.p0i8(i8* %a)
+
+  %a3 = call i8* @llvm.strip.invariant.group.p0i8(i8* %a2)
+  %b2 = call i8* @llvm.strip.invariant.group.p0i8(i8* %b)
+  %c = icmp eq i8* %a3, %b2
+; CHECK: ret ii false
+  ret i1 %c
+}
+
+
+declare i8* @llvm.launder.invariant.group.p0i8(i8*)
+declare i8 addrspace(42)* @llvm.launder.invariant.group.p42i8(i8 addrspace(42)*)
 declare i8* @llvm.strip.invariant.group.p0i8(i8*)
 declare i8 addrspace(42)* @llvm.strip.invariant.group.p42i8(i8 addrspace(42)*)
 
