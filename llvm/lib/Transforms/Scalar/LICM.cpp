@@ -522,6 +522,28 @@ bool llvm::hoistRegion(DomTreeNode *N, AliasAnalysis *AA, LoopInfo *LI,
   return Changed;
 }
 
+static bool canKeepMetadata(const Instruction &I, const DominatorTree *DT,
+                            const Loop *CurLoop,
+                            const LoopSafetyInfo *SafetyInfo) {
+  // The metadata is valid in the loop preheader if we are guaranteed to
+  // execute I if we entered the loop.
+  return isGuaranteedToExecute(I, DT, CurLoop, SafetyInfo);
+}
+
+static bool
+isUnconditionalInvariantGroupLoad(LoadInst *LI, const DominatorTree *DT,
+                                  const Loop *CurLoop,
+                                  const LoopSafetyInfo *SafetyInfo) {
+  if (!LI->getMetadata(LLVMContext::MD_invariant_group))
+    return false;
+
+  // For now we only want to hoist invariant.group loads if we can keep
+  // the metadata.  This is because we don't know yet if it's better to hoist it
+  // and loose metadata, or to keep the metadata counting that we will be able
+  // to merge this load with another outside the loop.
+  return canKeepMetadata(*LI, DT, CurLoop, SafetyInfo);
+}
+
 // Return true if LI is invariant within scope of the loop. LI is invariant if
 // CurLoop is dominated by an invariant.start representing the same memory
 // location and size as the memory location LI loads from, and also the
@@ -596,6 +618,9 @@ bool llvm::canSinkOrHoistInst(Instruction &I, AAResults *AA, DominatorTree *DT,
 
     if (LI->isAtomic() && SinkingToLoopBody)
       return false; // Don't sink unordered atomic loads to loop body.
+
+    if (isUnconditionalInvariantGroupLoad(LI, DT, CurLoop, SafetyInfo))
+      return true;
 
     // This checks for an invariant.start dominating the load.
     if (isLoadInvariantInLoop(LI, DT, CurLoop))
@@ -1041,15 +1066,13 @@ static bool hoist(Instruction &I, const DominatorTree *DT, const Loop *CurLoop,
                                                          << ore::NV("Inst", &I);
   });
 
-  // Metadata can be dependent on conditions we are hoisting above.
-  // Conservatively strip all metadata on the instruction unless we were
-  // guaranteed to execute I if we entered the loop, in which case the metadata
-  // is valid in the loop preheader.
+  // Metadata can be dependent on conditions we are hoisting above.  Except when
+  // we can prove the metadata independent of any such conditions, strip it.
   if (I.hasMetadataOtherThanDebugLoc() &&
       // The check on hasMetadataOtherThanDebugLoc is to prevent us from burning
-      // time in isGuaranteedToExecute if we don't actually have anything to
+      // time in canKeepMetadata if we don't actually have anything to
       // drop.  It is a compile time optimization, not required for correctness.
-      !isGuaranteedToExecute(I, DT, CurLoop, SafetyInfo))
+      !canKeepMetadata(I, DT, CurLoop, SafetyInfo))
     I.dropUnknownNonDebugMetadata();
 
   // Move the new node to the Preheader, before its terminator.
