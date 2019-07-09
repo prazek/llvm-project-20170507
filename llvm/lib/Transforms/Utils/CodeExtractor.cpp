@@ -65,6 +65,7 @@
 #include <set>
 #include <utility>
 #include <vector>
+#include <llvm/IR/Attributes.h>
 
 using namespace llvm;
 using ProfileCount = Function::ProfileCount;
@@ -816,6 +817,7 @@ Function *CodeExtractor::constructFunction(const ValueSet &inputs,
       case Attribute::SanitizeAddress:
       case Attribute::SanitizeMemory:
       case Attribute::SanitizeThread:
+      case Attribute::SupportedOptimizations:
       case Attribute::SanitizeHWAddress:
       case Attribute::SpeculativeLoadHardening:
       case Attribute::StackProtect:

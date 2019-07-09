@@ -102,6 +102,28 @@ Attribute Attribute::get(LLVMContext &Context, Attribute::AttrKind Kind,
   return Attribute(PA);
 }
 
+Attribute Attribute::get(LLVMContext &Context, Attribute::AttrKind Kind,
+                         StringRef Val) {
+  LLVMContextImpl *pImpl = Context.pImpl;
+  FoldingSetNodeID ID;
+  ID.AddInteger(Kind);
+  if (!Val.empty())
+    ID.AddString(Val);
+
+  void *InsertPoint;
+  AttributeImpl *PA = pImpl->AttrsSet.FindNodeOrInsertPos(ID, InsertPoint);
+
+  if (!PA) {
+    // If we didn't find any existing attributes of the same shape then create a
+    // new one and insert it.
+    PA = new IntStringAttributeImpl(Kind, Val);
+    pImpl->AttrsSet.InsertNode(PA, InsertPoint);
+  }
+
+  // Return the Attribute that we found or created.
+  return Attribute(PA);
+}
+
 Attribute Attribute::get(LLVMContext &Context, StringRef Kind, StringRef Val) {
   LLVMContextImpl *pImpl = Context.pImpl;
   FoldingSetNodeID ID;
@@ -114,7 +136,7 @@ Attribute Attribute::get(LLVMContext &Context, StringRef Kind, StringRef Val) {
   if (!PA) {
     // If we didn't find any existing attributes of the same shape then create a
     // new one and insert it.
-    PA = new StringAttributeImpl(Kind, Val);
+    PA = new StringStringAttributeImpl(Kind, Val);
     pImpl->AttrsSet.InsertNode(PA, InsertPoint);
   }
 
@@ -155,6 +177,13 @@ Attribute::getWithAllocSizeArgs(LLVMContext &Context, unsigned ElemSizeArg,
   return get(Context, AllocSize, packAllocSizeArgs(ElemSizeArg, NumElemsArg));
 }
 
+Attribute Attribute::getWithSupportedOptimizations(
+    LLVMContext &Context,
+    const SmallVectorImpl<StringRef> &SupportedOptimizations) {
+  std::string SupportedStr = join(SupportedOptimizations, ",");
+  return get(Context, Attribute::SupportedOptimizations, std::move(SupportedStr));
+}
+
 //===----------------------------------------------------------------------===//
 // Attribute Accessor Methods
 //===----------------------------------------------------------------------===//
@@ -168,7 +197,7 @@ bool Attribute::isIntAttribute() const {
 }
 
 bool Attribute::isStringAttribute() const {
-  return pImpl && pImpl->isStringAttribute();
+  return pImpl && pImpl->isStringStringAttribute();
 }
 
 Attribute::AttrKind Attribute::getKindAsEnum() const {
@@ -225,6 +254,16 @@ uint64_t Attribute::getDereferenceableBytes() const {
          "Trying to get dereferenceable bytes from "
          "non-dereferenceable attribute!");
   return pImpl->getValueAsInt();
+}
+
+SmallVector<StringRef, 2> Attribute::getSupportedOptimizations() const {
+  assert(hasAttribute(Attribute::SupportedOptimizations) &&
+      "Trying to get supported optimizations list from "
+      "non-supported_optimization attribute!");
+  SmallVector<StringRef, 2> SupportedOptimizations;
+  SplitString(pImpl->getValueAsString(),
+      SupportedOptimizations, ",");
+  return SupportedOptimizations;
 }
 
 uint64_t Attribute::getDereferenceableOrNullBytes() const {
@@ -448,15 +487,17 @@ void EnumAttributeImpl::anchor() {}
 
 void IntAttributeImpl::anchor() {}
 
-void StringAttributeImpl::anchor() {}
+void IntStringAttributeImpl::anchor() {}
+
+void StringStringAttributeImpl::anchor() {}
 
 bool AttributeImpl::hasAttribute(Attribute::AttrKind A) const {
-  if (isStringAttribute()) return false;
+  if (isStringStringAttribute()) return false;
   return getKindAsEnum() == A;
 }
 
 bool AttributeImpl::hasAttribute(StringRef Kind) const {
-  if (!isStringAttribute()) return false;
+  if (!isStringStringAttribute()) return false;
   return getKindAsString() == Kind;
 }
 
@@ -471,13 +512,13 @@ uint64_t AttributeImpl::getValueAsInt() const {
 }
 
 StringRef AttributeImpl::getKindAsString() const {
-  assert(isStringAttribute());
-  return static_cast<const StringAttributeImpl *>(this)->getStringKind();
+  assert(isStringStringAttribute());
+  return static_cast<const StringStringAttributeImpl *>(this)->getStringKind();
 }
 
 StringRef AttributeImpl::getValueAsString() const {
-  assert(isStringAttribute());
-  return static_cast<const StringAttributeImpl *>(this)->getStringValue();
+  assert(isStringStringAttribute());
+  return static_cast<const StringStringAttributeImpl *>(this)->getStringValue();
 }
 
 bool AttributeImpl::operator<(const AttributeImpl &AI) const {
@@ -486,7 +527,7 @@ bool AttributeImpl::operator<(const AttributeImpl &AI) const {
   if (isEnumAttribute()) {
     if (AI.isEnumAttribute()) return getKindAsEnum() < AI.getKindAsEnum();
     if (AI.isIntAttribute()) return true;
-    if (AI.isStringAttribute()) return true;
+    if (AI.isStringStringAttribute()) return true;
   }
 
   if (isIntAttribute()) {
@@ -496,7 +537,7 @@ bool AttributeImpl::operator<(const AttributeImpl &AI) const {
         return getValueAsInt() < AI.getValueAsInt();
       return getKindAsEnum() < AI.getKindAsEnum();
     }
-    if (AI.isStringAttribute()) return true;
+    if (AI.isStringStringAttribute()) return true;
   }
 
   if (AI.isEnumAttribute()) return false;

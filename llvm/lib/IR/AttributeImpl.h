@@ -42,7 +42,8 @@ protected:
   enum AttrEntryKind {
     EnumAttrEntry,
     IntAttrEntry,
-    StringAttrEntry
+    IntStringAttrEntry,
+    StringStringAttrEntry
   };
 
   AttributeImpl(AttrEntryKind KindID) : KindID(KindID) {}
@@ -56,8 +57,8 @@ public:
 
   bool isEnumAttribute() const { return KindID == EnumAttrEntry; }
   bool isIntAttribute() const { return KindID == IntAttrEntry; }
-  bool isStringAttribute() const { return KindID == StringAttrEntry; }
-
+  bool isStringStringAttribute() const { return KindID == StringStringAttrEntry; }
+  bool isIntStringAttrEntry() const { return KindID == IntStringAttrEntry; }
   bool hasAttribute(Attribute::AttrKind A) const;
   bool hasAttribute(StringRef Kind) const;
 
@@ -132,15 +133,30 @@ public:
   uint64_t getValue() const { return Val; }
 };
 
-class StringAttributeImpl : public AttributeImpl {
+class IntStringAttributeImpl : public EnumAttributeImpl {
+  std::string Val;
+
+  void anchor() override;
+
+public:
+  IntStringAttributeImpl(Attribute::AttrKind Kind, std::string Val)
+      : EnumAttributeImpl(IntAttrEntry, Kind), Val(std::move(Val)) {
+    assert((Kind == Attribute::SupportedOptimizations) &&
+        "Wrong kind for int string attribute!");
+  }
+
+  StringRef getStringValue() const { return Val; }
+};
+
+class StringStringAttributeImpl : public AttributeImpl {
   virtual void anchor();
 
   std::string Kind;
   std::string Val;
 
 public:
-  StringAttributeImpl(StringRef Kind, StringRef Val = StringRef())
-      : AttributeImpl(StringAttrEntry), Kind(Kind), Val(Val) {}
+  StringStringAttributeImpl(StringRef Kind, StringRef Val = StringRef())
+      : AttributeImpl(StringStringAttrEntry), Kind(Kind), Val(Val) {}
 
   StringRef getStringKind() const { return Kind; }
   StringRef getStringValue() const { return Val; }

@@ -184,6 +184,8 @@ def SanitizeHWAddress : EnumAttr<"sanitize_hwaddress">;
 /// this attribute will always be lowered with hardening enabled.
 def SpeculativeLoadHardening : EnumAttr<"speculative_load_hardening">;
 
+def SupportedOptimizations : EnumAttr<"cxx.clang.devirtualization">;
+
 /// Argument is swift error.
 def SwiftError : EnumAttr<"swifterror">;
 

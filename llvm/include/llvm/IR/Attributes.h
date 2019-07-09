@@ -89,8 +89,10 @@ public:
 
   /// Return a uniquified Attribute object.
   static Attribute get(LLVMContext &Context, AttrKind Kind, uint64_t Val = 0);
+  static Attribute get(LLVMContext &Context, AttrKind Kind, StringRef Val);
   static Attribute get(LLVMContext &Context, StringRef Kind,
                        StringRef Val = StringRef());
+
 
   /// Return a uniquified Attribute object that has the specific
   /// alignment set.
@@ -103,6 +105,9 @@ public:
   static Attribute getWithAllocSizeArgs(LLVMContext &Context,
                                         unsigned ElemSizeArg,
                                         const Optional<unsigned> &NumElemsArg);
+
+  static Attribute getWithSupportedOptimizations(LLVMContext &Context,
+      const SmallVectorImpl<StringRef>& SupportedOptimizations);
 
   //===--------------------------------------------------------------------===//
   // Attribute Accessors
@@ -155,6 +160,8 @@ public:
   /// Returns the number of dereferenceable_or_null bytes from the
   /// dereferenceable_or_null attribute.
   uint64_t getDereferenceableOrNullBytes() const;
+
+  SmallVector<StringRef, 2> getSupportedOptimizations() const;
 
   /// Returns the argument numbers for the allocsize attribute (or pair(0, 0)
   /// if not known).
